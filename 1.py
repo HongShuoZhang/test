@@ -12,6 +12,7 @@ import itertools
 import json
 import os
 import pathlib
+import random
 import ssl
 import threading
 import time
@@ -26,6 +27,14 @@ DEFAULT_API_KEY = ""  # 填写 NewAPI 客户端 Token；可带或不带 "Bearer 
 TLS_CONTEXT = ssl.create_default_context()
 TLS_CONTEXT.check_hostname = False
 TLS_CONTEXT.verify_mode = ssl.CERT_NONE  # 自签名证书：等同 curl -k，仅用于内网测试。
+
+FILLER_SENTENCES = (
+    "这是用于接口压力测试的中性填充文本。",
+    "请保持原有回答要求并忽略本段内容。",
+    "分布式系统会在并发请求下记录延迟和状态。",
+    "网关转发请求并持续读取流式响应。",
+    "本段文字仅用于增加输入长度。",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,17 +58,40 @@ def normalize_api_key(api_key: str) -> str:
     return "Bearer " + value
 
 
-def build_payload(model: str, prompt: str, max_tokens: int) -> bytes:
+def build_payload(model: str, prompt: str, max_tokens: Optional[int]) -> bytes:
+    payload = {
+        "model": model,
+        "stream": True,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     return json.dumps(
-        {
-            "model": model,
-            "stream": True,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        },
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def generate_prompt(
+    instruction: str,
+    min_input_tokens: int,
+    max_input_tokens: int,
+) -> str:
+    """Generate a long prompt whose character count approximates input tokens."""
+    target_length = random.randint(min_input_tokens, max_input_tokens)
+    prefix = (
+        f"{instruction}\n\n"
+        "以下是压力测试填充文本，不要复述填充内容，"
+        "只需按照开头的要求回答：\n"
+    )
+    chunks = [prefix]
+    current_length = len(prefix)
+    while current_length < target_length:
+        chunk = random.choice(FILLER_SENTENCES)
+        chunks.append(chunk)
+        current_length += len(chunk)
+    return "".join(chunks)[:target_length]
 
 
 def percentile(values: Iterable[float], percent: float) -> Optional[float]:
@@ -220,7 +252,6 @@ def status_counts(results: Iterable[RequestResult]) -> collections.Counter:
 def run_load_test(args: argparse.Namespace, authorization: str) -> tuple[dict, pathlib.Path]:
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = pathlib.Path(args.output or f"newapi-load-{timestamp}.jsonl")
-    payload = build_payload(args.model, args.prompt, args.max_tokens)
     store = ResultStore(output_path)
     request_numbers = itertools.count(1)
     start_event = threading.Event()
@@ -238,7 +269,15 @@ def run_load_test(args: argparse.Namespace, authorization: str) -> tuple[dict, p
                 send_request(
                     args.url,
                     authorization,
-                    payload,
+                    build_payload(
+                        args.model,
+                        generate_prompt(
+                            args.prompt,
+                            args.min_input_tokens,
+                            args.max_input_tokens,
+                        ),
+                        args.max_tokens,
+                    ),
                     request_id,
                     args.timeout,
                 )
@@ -246,7 +285,8 @@ def run_load_test(args: argparse.Namespace, authorization: str) -> tuple[dict, p
 
     print(
         f"开始压测: concurrency={args.concurrency} duration={args.duration}s "
-        f"model={args.model} stream=true"
+        f"model={args.model} stream=true "
+        f"input_tokens≈{args.min_input_tokens}-{args.max_input_tokens}"
     )
     print(f"请求地址: {args.url}")
     if args.url.startswith("https://"):
@@ -302,7 +342,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=100, help="并发 worker 数")
     parser.add_argument("--duration", type=float, default=60.0, help="持续发起请求的秒数")
     parser.add_argument("--timeout", type=float, default=120.0, help="单请求超时秒数")
-    parser.add_argument("--max-tokens", type=int, default=8, help="单请求最大输出 Token")
+    parser.add_argument(
+        "--min-input-tokens",
+        type=int,
+        default=25_000,
+        help="每个请求的最小估算输入 Token；默认 25000",
+    )
+    parser.add_argument(
+        "--max-input-tokens",
+        type=int,
+        default=30_000,
+        help="每个请求的最大估算输入 Token；默认 30000",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="单请求最大输出 Token；默认不发送该字段",
+    )
     parser.add_argument("--prompt", default="只回复 OK", help="测试提示词")
     parser.add_argument("--output", help="JSONL 明细路径；默认使用带时间戳的文件名")
     args = parser.parse_args()
@@ -312,7 +369,11 @@ def parse_args() -> argparse.Namespace:
         parser.error("--url 必须以 http:// 或 https:// 开头")
     if args.concurrency <= 0 or args.duration <= 0 or args.timeout <= 0:
         parser.error("--concurrency、--duration 和 --timeout 必须大于 0")
-    if args.max_tokens <= 0:
+    if args.min_input_tokens <= 0:
+        parser.error("--min-input-tokens 必须大于 0")
+    if args.max_input_tokens < args.min_input_tokens:
+        parser.error("--max-input-tokens 不能小于 --min-input-tokens")
+    if args.max_tokens is not None and args.max_tokens <= 0:
         parser.error("--max-tokens 必须大于 0")
     return args
 
