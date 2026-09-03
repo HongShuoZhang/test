@@ -1,0 +1,13 @@
+redis:
+  service_name: "redis.dns"
+rule_items:
+- limit_by_header: "Authorization"
+  limit_keys:
+  - key: "Bearer api_7e4f2d91c8b34a8fa2d6b5e17f93ac4ei9b6c1d2e5f7a8c0d"
+    query_per_second: 500
+- limit_by_per_header: "Authorization"
+  limit_keys:
+  - key: "*"
+    query_per_second: 3
+rule_name: "api-key-request-header-limit-rule"
+show_limit_quota_header: true
