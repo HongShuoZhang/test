@@ -12,6 +12,7 @@ import itertools
 import json
 import os
 import pathlib
+import ssl
 import threading
 import time
 import urllib.error
@@ -22,6 +23,9 @@ from typing import Iterable, Optional
 # ===== 直接修改这里即可 =====
 DEFAULT_URL = "https://10.255.87.120:3000/v1/chat/completions"
 DEFAULT_API_KEY = ""  # 填写 NewAPI 客户端 Token；可带或不带 "Bearer " 前缀。
+TLS_CONTEXT = ssl.create_default_context()
+TLS_CONTEXT.check_hostname = False
+TLS_CONTEXT.verify_mode = ssl.CERT_NONE  # 自签名证书：等同 curl -k，仅用于内网测试。
 
 
 @dataclasses.dataclass(frozen=True)
@@ -159,7 +163,11 @@ def send_request(
     )
     started_at = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(
+            request,
+            timeout=timeout,
+            context=TLS_CONTEXT,
+        ) as response:
             first_byte_at, _ = read_response(response, capture_limit=0)
             finished_at = time.monotonic()
             return RequestResult(
@@ -241,6 +249,8 @@ def run_load_test(args: argparse.Namespace, authorization: str) -> tuple[dict, p
         f"model={args.model} stream=true"
     )
     print(f"请求地址: {args.url}")
+    if args.url.startswith("https://"):
+        print("警告: 已跳过 TLS 证书校验（等同 curl -k，仅用于内网测试）")
     print(f"明细文件: {output_path}")
 
     try:
