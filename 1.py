@@ -339,20 +339,20 @@ def parse_args() -> argparse.Namespace:
         help=f"完整接口地址；默认 {DEFAULT_URL}，也可设置 NEWAPI_URL",
     )
     parser.add_argument("--model", default="GLM-5.2", help="请求模型名")
-    parser.add_argument("--concurrency", type=int, default=100, help="并发 worker 数")
+    parser.add_argument("--concurrency", type=int, default=300, help="并发 worker 数")
     parser.add_argument("--duration", type=float, default=60.0, help="持续发起请求的秒数")
     parser.add_argument("--timeout", type=float, default=120.0, help="单请求超时秒数")
     parser.add_argument(
         "--min-input-tokens",
         type=int,
-        default=25_000,
-        help="每个请求的最小估算输入 Token；默认 25000",
+        default=100_000,
+        help="每个请求的最小估算输入 Token；默认 100000",
     )
     parser.add_argument(
         "--max-input-tokens",
         type=int,
-        default=30_000,
-        help="每个请求的最大估算输入 Token；默认 30000",
+        default=105_000,
+        help="每个请求的最大估算输入 Token；默认 105000",
     )
     parser.add_argument(
         "--max-tokens",
